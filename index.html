@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <title>간식 주기 게임</title>
+    <style>
+        body {
+            background-color: #f0f0f0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            font-family: 'Malgun Gothic', sans-serif;
+            user-select: none;
+        }
+        #gameCanvas {
+            background-color: #ffffff;
+            border: 2px solid #333333;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.15);
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+
+<canvas id="gameCanvas" width="400" height="550"></canvas>
+
+<script>
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+
+// --- 데이터 저장/로드 ---
+let gameData = JSON.parse(localStorage.getItem('gameData')) || { attempts: 0, highScore: 0, lowScore: 0 };
+
+function saveData() {
+    localStorage.setItem('gameData', JSON.stringify(gameData));
+}
+
+// --- 자원 로드 ---
+function loadImage(src) {
+    const img = new Image();
+    img.loaded = false;
+    img.onload = () => { img.loaded = true; };
+    img.onerror = () => { img.loaded = false; };
+    img.src = src;
+    return img;
+}
+
+const imgCharDefault = loadImage('assets/character.png');
+const imgCharFaces = {
+    3: loadImage('assets/character_3pt.png'),
+    2: loadImage('assets/character_2pt.png'),
+    1: loadImage('assets/character_1pt.png'),
+    '-2': loadImage('assets/character_minus2pt.png')
+};
+
+const imgSnacks = [
+    loadImage('assets/snack1.png'),
+    loadImage('assets/snack2.png'),
+    loadImage('assets/snack3.png'),
+    loadImage('assets/snack4.png')
+];
+
+const sndSnacks = [
+    'assets/sound_1pt.wav',
+    'assets/sound_1pt.wav',
+    'assets/sound_1pt.wav',
+    'assets/sound_minus2pt.wav'
+];
+
+function playSound(src) {
+    const audio = new Audio(src);
+    audio.play().catch(() => {});
+}
+
+// --- 게임 상태 및 변수 ---
+let gameState = 'START';
+let score = 0;
+let remainingTime = 30; // ★ 게임 시간을 30초로 변경
+let timerInterval = null;
+let activeSnacks = [];
+
+let currentCharImg = imgCharDefault;
+let currentVal = 0;
+let squishTimer = 0;
+let faceTimer = 0;
+
+// --- 간식 클래스 ---
+class Snack {
+    constructor() {
+        const rand = Math.random() * 100;
+        if (rand < 15) this.typeIdx = 0;
+        else if (rand < 40) this.typeIdx = 1;
+        else if (rand < 80) this.typeIdx = 2;
+        else this.typeIdx = 3;
+
+        this.image = imgSnacks[this.typeIdx];
+        this.scoreValue = [3, 2, 1, -2][this.typeIdx];
+        this.x = Math.floor(Math.random() * (canvas.width - 60)) + 10;
+        this.y = Math.floor(Math.random() * (canvas.height - 150)) + 90;
+        this.width = 40;
+        this.height = 40;
+        this.duration = Math.floor(Math.random() * 40) + 40;
+        this.timer = 0;
+    }
+
+    update() {
+        this.timer++;
+        return this.timer >= this.duration;
+    }
+
+    draw() {
+        if (this.image.loaded) {
+            ctx.drawImage(this.image, this.x, this.y, this.width, this.height);
+        } else {
+            const colors = ['#ff9999', '#ffcc99', '#ffff99', '#cccccc'];
+            ctx.fillStyle = colors[this.typeIdx];
+            ctx.fillRect(this.x, this.y, this.width, this.height);
+            ctx.fillStyle = '#000000';
+            ctx.font = '12px "Malgun Gothic"';
+            ctx.textAlign = 'center';
+            ctx.fillText(`${this.scoreValue}점`, this.x + 20, this.y + 24);
+        }
+    }
+}
+
+function triggerReaction(val) {
+    currentVal = val;
+    currentCharImg = imgCharFaces[val] || imgCharDefault;
+    faceTimer = 30;  
+    squishTimer = 12; 
+}
+
+// --- 클릭 이벤트 ---
+canvas.addEventListener('click', (e) => {
+    const rect = canvas.getBoundingClientRect();
+    const mx = e.clientX - rect.left;
+    const my = e.clientY - rect.top;
+
+    if (gameState === 'START') {
+        if (mx >= 110 && mx <= 290 && my >= 260 && my <= 310) {
+            startGame();
+        }
+    } else if (gameState === 'PLAYING') {
+        for (let i = activeSnacks.length - 1; i >= 0; i--) {
+            const s = activeSnacks[i];
+            if (mx >= s.x && mx <= s.x + s.width && my >= s.y && my <= s.y + s.height) {
+                score += s.scoreValue;
+                playSound(sndSnacks[s.typeIdx]);
+                triggerReaction(s.scoreValue);
+                activeSnacks.splice(i, 1);
+                break;
+            }
+        }
+    } else if (gameState === 'RESULT') {
+        if (mx >= 110 && mx <= 290 && my >= 380 && my <= 425) {
+            startGame();
+        }
+    }
+});
+
+function startGame() {
+    gameState = 'PLAYING';
+    score = 0;
+    remainingTime = 30; // ★ 시작할 때 30초로 설정
+    activeSnacks = [];
+    gameData.attempts++;
+    saveData();
+
+    clearInterval(timerInterval);
+    timerInterval = setInterval(() => {
+        remainingTime--;
+        if (remainingTime <= 0) {
+            endGame();
+        }
+    }, 1000);
+}
+
+function endGame() {
+    gameState = 'RESULT';
+    clearInterval(timerInterval);
+
+    if (gameData.attempts === 1) {
+        gameData.highScore = score;
+        gameData.lowScore = score;
+    } else {
+        gameData.highScore = Math.max(gameData.highScore, score);
+        gameData.lowScore = Math.min(gameData.lowScore, score);
+    }
+    saveData();
+    playSound('assets/result.wav');
+}
+
+// --- 캐릭터 그리기 ---
+function drawCharacter(x, y, w, h) {
+    if (currentCharImg && currentCharImg.loaded) {
+        ctx.drawImage(currentCharImg, x, y, w, h);
+    } else {
+        ctx.fillStyle = faceTimer > 0 ? (currentVal < 0 ? '#ffb3b3' : '#b3ffb3') : '#ffd966';
+        ctx.beginPath();
+        ctx.arc(x + w/2, y + h/2, w/2, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = '#333333';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+
+        ctx.fillStyle = '#000000';
+        ctx.font = 'bold 14px "Malgun Gothic"';
+        ctx.textAlign = 'center';
+        ctx.fillText(faceTimer > 0 ? `${currentVal}점!` : '캐릭터', x + w/2, y + h/2 + 5);
+    }
+}
+
+// --- 루프 ---
+let spawnTimer = 0;
+
+function gameLoop() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    if (gameState === 'START') {
+        ctx.fillStyle = '#000000';
+        ctx.font = 'bold 32px "Malgun Gothic"';
+        ctx.textAlign = 'center';
+        ctx.fillText('간식 주기 게임', canvas.width / 2, 190);
+
+        ctx.fillStyle = '#90ee90';
+        ctx.beginPath();
+        ctx.roundRect(110, 260, 180, 50, 12);
+        ctx.fill();
+        ctx.strokeStyle = '#228b22';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+
+        ctx.fillStyle = '#000000';
+        ctx.font = 'bold 22px "Malgun Gothic"';
+        ctx.fillText('게임 시작', canvas.width / 2, 292);
+
+    } else if (gameState === 'PLAYING') {
+        ctx.fillStyle = '#000000';
+        ctx.font = 'bold 32px "Malgun Gothic"';
+        ctx.textAlign = 'center';
+        const min = Math.floor(remainingTime / 60);
+        const sec = remainingTime % 60;
+        const timeStr = `${min}:${sec < 10 ? '0' : ''}${sec}`;
+        ctx.fillText(timeStr, canvas.width / 2, 45);
+
+        ctx.font = 'bold 22px "Malgun Gothic"';
+        ctx.fillText(`🍬 ${score}`, canvas.width / 2, 80);
+
+        let baseW = 80, baseH = 80;
+        let curW = baseW, curH = baseH;
+        let curX = (canvas.width - baseW) / 2;
+        let curY = (canvas.height - baseH) / 2;
+
+        if (faceTimer > 0) {
+            faceTimer--;
+            if (faceTimer === 0) currentCharImg = imgCharDefault;
+        }
+
+        if (squishTimer > 0) {
+            squishTimer--;
+            curW = 95;
+            curH = 65;
+            curX = (canvas.width - baseW) / 2 - (curW - baseW) / 2;
+            curY = (canvas.height - baseH) / 2 + (baseH - curH);
+        }
+
+        drawCharacter(curX, curY, curW, curH);
+
+        spawnTimer++;
+        if (spawnTimer >= 18) {
+            spawnTimer = 0;
+            if (activeSnacks.length < 5) {
+                activeSnacks.push(new Snack());
+            }
+        }
+
+        for (let i = activeSnacks.length - 1; i >= 0; i--) {
+            const s = activeSnacks[i];
+            if (s.update()) {
+                activeSnacks.splice(i, 1);
+            } else {
+                s.draw();
+            }
+        }
+
+    } else if (gameState === 'RESULT') {
+        ctx.fillStyle = '#000000';
+        ctx.font = 'bold 32px "Malgun Gothic"';
+        ctx.textAlign = 'center';
+        ctx.fillText('게임 종료!', canvas.width / 2, 140);
+
+        ctx.font = '20px "Malgun Gothic"';
+        ctx.textAlign = 'left';
+        ctx.fillText(`도전 횟수: ${gameData.attempts}번째 도전`, 100, 210);
+        ctx.fillText(`이번 점수: ${score}점`, 100, 250);
+
+        ctx.fillStyle = '#228b22';
+        ctx.fillText(`최고 기록: ${gameData.highScore}점`, 100, 300);
+        ctx.fillStyle = '#000000';
+        ctx.fillText(`최저 기록: ${gameData.lowScore}점`, 100, 335);
+
+        ctx.fillStyle = '#90ee90';
+        ctx.beginPath();
+        ctx.roundRect(110, 380, 180, 45, 12);
+        ctx.fill();
+        ctx.strokeStyle = '#228b22';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+
+        ctx.fillStyle = '#000000';
+        ctx.font = 'bold 22px "Malgun Gothic"';
+        ctx.textAlign = 'center';
+        ctx.fillText('다시 하기', canvas.width / 2, 410);
+    }
+
+    requestAnimationFrame(gameLoop);
+}
+
+gameLoop();
+</script>
+</body>
+</html>
